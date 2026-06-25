@@ -2,15 +2,21 @@ package com.zouzou.princess
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.PowerManager
+import android.provider.MediaStore
 import android.view.KeyEvent
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -18,7 +24,10 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.FileProvider
+import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
@@ -27,9 +36,36 @@ class MainActivity : AppCompatActivity() {
     private lateinit var errorView: View
     private lateinit var loadingView: View
     private var wakeLock: PowerManager.WakeLock? = null
+    private var filePathCallback: ValueCallback<Array<Uri>>? = null
+    private var cameraPhotoUri: Uri? = null
 
     companion object {
         const val TARGET_URL = "https://zouzou-princess-fan.replit.app/dashboard"
+    }
+
+    /** 文件选择回调 */
+    private val fileChooserLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (filePathCallback == null) return@registerForActivityResult
+
+        val uris: Array<Uri>? = when {
+            result.resultCode == RESULT_OK && result.data?.data != null -> {
+                arrayOf(result.data!!.data!!)
+            }
+            result.resultCode == RESULT_OK && result.data?.clipData != null -> {
+                val clipData = result.data!!.clipData!!
+                Array(clipData.itemCount) { i -> clipData.getItemAt(i).uri }
+            }
+            result.resultCode == RESULT_OK && cameraPhotoUri != null -> {
+                arrayOf(cameraPhotoUri!!)
+            }
+            else -> null
+        }
+
+        filePathCallback?.onReceiveValue(uris)
+        filePathCallback = null
+        cameraPhotoUri = null
     }
 
     /** JS 回调接口，接收网页真实滚动状态 */
@@ -127,6 +163,30 @@ class MainActivity : AppCompatActivity() {
                     if (newProgress == 100) {
                         loadingView.visibility = View.GONE
                     }
+                }
+
+                override fun onShowFileChooser(
+                    webView: WebView?,
+                    callback: ValueCallback<Array<Uri>>?,
+                    params: FileChooserParams?
+                ): Boolean {
+                    filePathCallback?.onReceiveValue(null)
+                    filePathCallback = callback
+
+                    val contentIntent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                        type = "image/*"
+                        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, false)
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                    }
+
+                    val cameraIntent = createCameraIntent()
+
+                    val chooser = Intent.createChooser(contentIntent, "选择图片").apply {
+                        putExtra(Intent.EXTRA_INITIAL_INTENTS, arrayOf(cameraIntent))
+                    }
+
+                    fileChooserLauncher.launch(chooser)
+                    return true
                 }
             }
         }
@@ -245,6 +305,26 @@ class MainActivity : AppCompatActivity() {
             "ZouzouPrincess::Heartbeat"
         )
         wakeLock?.acquire()
+    }
+
+    /**
+     * 创建拍照 Intent，生成临时文件供相机写入
+     */
+    private fun createCameraIntent(): Intent {
+        val photoFile = File.createTempFile(
+            "camera_",
+            ".jpg",
+            getExternalFilesDir(Environment.DIRECTORY_PICTURES)
+        )
+        cameraPhotoUri = FileProvider.getUriForFile(
+            this,
+            "${packageName}.fileprovider",
+            photoFile
+        )
+        return Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+            putExtra(MediaStore.EXTRA_OUTPUT, cameraPhotoUri)
+            addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        }
     }
 
     private fun showError() {
