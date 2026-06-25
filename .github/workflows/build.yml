@@ -30,6 +30,10 @@ jobs:
       - name: 赋予 gradlew 执行权限
         run: chmod +x gradlew
 
+      - name: 安装 Android SDK
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-34" "build-tools;34.0.0"
+
       - name: 构建 Debug APK
         run: ./gradlew assembleDebug
 
