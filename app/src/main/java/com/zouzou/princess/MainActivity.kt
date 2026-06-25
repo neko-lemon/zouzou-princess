@@ -9,8 +9,8 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.view.KeyEvent
 import android.view.View
-import android.view.ViewTreeObserver
 import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -19,18 +19,25 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
-    private lateinit var swipeRefresh: SwipeRefreshLayout
+    private lateinit var swipeRefresh: CustomSwipeRefreshLayout
     private lateinit var errorView: View
     private lateinit var loadingView: View
     private var wakeLock: PowerManager.WakeLock? = null
 
     companion object {
         const val TARGET_URL = "https://zouzou-princess-fan.replit.app/dashboard"
+    }
+
+    /** JS 回调接口，接收网页真实滚动状态 */
+    inner class ScrollInterface {
+        @JavascriptInterface
+        fun onScrollState(canScrollUp: Boolean) {
+            swipeRefresh.webCanScrollUp = canScrollUp
+        }
     }
 
     @SuppressLint("WakelockTimeout")
@@ -45,7 +52,6 @@ class MainActivity : AppCompatActivity() {
 
         setupWebView()
         setupSwipeRefresh()
-        setupScrollListener()
         setupErrorRetry()
         acquireWakeLock()
 
@@ -77,7 +83,8 @@ class MainActivity : AppCompatActivity() {
                 javaScriptCanOpenWindowsAutomatically = true
             }
 
-            // Cookie 管理 - 心跳检测依赖 session cookie
+            addJavascriptInterface(ScrollInterface(), "AndroidScroll")
+
             CookieManager.getInstance().apply {
                 setAcceptCookie(true)
                 setAcceptThirdPartyCookies(this@MainActivity.webView, true)
@@ -93,8 +100,8 @@ class MainActivity : AppCompatActivity() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     loadingView.visibility = View.GONE
                     swipeRefresh.isRefreshing = false
-                    // 确保 Cookie 同步
                     CookieManager.getInstance().flush()
+                    injectScrollDetector(view)
                 }
 
                 override fun onReceivedError(
@@ -125,14 +132,58 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * 注入 JS 滚动检测器
+     *
+     * 使用 capture 模式监听所有元素的 scroll 事件，
+     * 检查 window、document、body 以及所有可滚动 div 的 scrollTop。
+     * 只要有任何元素 scrollTop > 0，就通知 Android "可以上滚"（禁用下拉刷新）。
+     * 全部为 0 时通知 Android "不可上滚"（启用下拉刷新）。
+     */
+    private fun injectScrollDetector(view: WebView?) {
+        val js = """
+            (function() {
+                if (window.__zouzouScrollInjected) return;
+                window.__zouzouScrollInjected = true;
+
+                function checkScroll() {
+                    var canUp = false;
+
+                    if (window.scrollY > 0) canUp = true;
+                    if (window.pageYOffset > 0) canUp = true;
+                    if (document.documentElement && document.documentElement.scrollTop > 0) canUp = true;
+                    if (document.body && document.body.scrollTop > 0) canUp = true;
+
+                    var els = document.querySelectorAll('*');
+                    for (var i = 0; i < els.length; i++) {
+                        var el = els[i];
+                        if (el.scrollTop > 0 && el.scrollHeight > el.clientHeight && el.clientHeight > 0) {
+                            canUp = true;
+                            break;
+                        }
+                    }
+
+                    if (window.AndroidScroll) {
+                        window.AndroidScroll.onScrollState(canUp);
+                    }
+                }
+
+                window.addEventListener('scroll', checkScroll, true);
+                document.addEventListener('scroll', checkScroll, true);
+                window.addEventListener('touchmove', checkScroll, true);
+                setTimeout(checkScroll, 200);
+                setTimeout(checkScroll, 1000);
+            })();
+        """.trimIndent()
+        view?.evaluateJavascript(js, null)
+    }
+
     private fun setupSwipeRefresh() {
         swipeRefresh.setColorSchemeResources(
             android.R.color.holo_blue_bright,
             android.R.color.holo_purple,
             android.R.color.holo_orange_light
         )
-        // 默认禁用，只在页面滚动到顶部时才启用
-        swipeRefresh.isEnabled = false
         swipeRefresh.setOnRefreshListener {
             if (isNetworkAvailable()) {
                 webView.reload()
@@ -141,20 +192,6 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, R.string.no_network, Toast.LENGTH_SHORT).show()
             }
         }
-    }
-
-    /**
-     * 监听 WebView 滚动位置：
-     * 用 canScrollVertically(-1) 判断页面是否还能往上滚。
-     * 不能往上滚时（即已在最顶部）才启用下拉刷新。
-     * 这比 scrollY == 0 更可靠，不受固定定位横幅影响。
-     */
-    private fun setupScrollListener() {
-        webView.viewTreeObserver.addOnScrollChangedListener(
-            ViewTreeObserver.OnScrollChangedListener {
-                swipeRefresh.isEnabled = !webView.canScrollVertically(-1)
-            }
-        )
     }
 
     private fun setupErrorRetry() {
@@ -170,9 +207,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * 获取 WakeLock 防止 CPU 休眠导致心跳检测中断
-     */
     @SuppressLint("WakelockTimeout")
     private fun acquireWakeLock() {
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -216,7 +250,6 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         webView.onPause()
-        // 保持 wakeLock，心跳检测在后台也需要运行
     }
 
     override fun onDestroy() {
