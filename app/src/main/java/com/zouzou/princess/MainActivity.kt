@@ -133,12 +133,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 注入 JS 滚动检测器
+     * 注入 JS 滚动检测器（方案1：触摸目标追踪）
      *
-     * 使用 capture 模式监听所有元素的 scroll 事件，
-     * 检查 window、document、body 以及所有可滚动 div 的 scrollTop。
-     * 只要有任何元素 scrollTop > 0，就通知 Android "可以上滚"（禁用下拉刷新）。
-     * 全部为 0 时通知 Android "不可上滚"（启用下拉刷新）。
+     * 核心思路：touchstart 时拿到手指下方的元素 (e.target)，
+     * 沿 parent 链向上找到最近的可滚动祖先，只检查它的 scrollTop。
+     *
+     * - 弹窗打开，手指在弹窗上 → 找到弹窗滚动容器 → scrollTop=0 → 允许刷新
+     * - 弹窗内容滚到中间 → scrollTop>0 → 禁止刷新
+     * - 弹窗关闭，手指在底层页面 → 找到页面滚动容器 → 正常判断
+     *
+     * 这样不管弹窗还是底层页面，只关心手指当前触摸的容器，
+     * 不受其他容器残留 scrollTop 的影响。
      */
     private fun injectScrollDetector(view: WebView?) {
         val js = """
@@ -146,33 +151,58 @@ class MainActivity : AppCompatActivity() {
                 if (window.__zouzouScrollInjected) return;
                 window.__zouzouScrollInjected = true;
 
-                function checkScroll() {
-                    var canUp = false;
+                var currentScrollable = null;
+                var currentCanScrollUp = false;
 
-                    if (window.scrollY > 0) canUp = true;
-                    if (window.pageYOffset > 0) canUp = true;
-                    if (document.documentElement && document.documentElement.scrollTop > 0) canUp = true;
-                    if (document.body && document.body.scrollTop > 0) canUp = true;
+                function isScrollable(el) {
+                    if (!el || el === document) return false;
+                    var style = window.getComputedStyle(el);
+                    if (style.overflowY === 'hidden' || style.overflowY === 'visible') return false;
+                    return el.scrollHeight > el.clientHeight && el.clientHeight > 0;
+                }
 
-                    var els = document.querySelectorAll('*');
-                    for (var i = 0; i < els.length; i++) {
-                        var el = els[i];
-                        if (el.scrollTop > 0 && el.scrollHeight > el.clientHeight && el.clientHeight > 0) {
-                            canUp = true;
-                            break;
-                        }
+                function findScrollableAncestor(el) {
+                    var node = el;
+                    while (node && node !== document.body && node !== document.documentElement) {
+                        if (isScrollable(node)) return node;
+                        node = node.parentElement;
                     }
+                    return null;
+                }
 
+                function checkElement(el) {
+                    if (!el) {
+                        currentCanScrollUp = window.scrollY > 0 || window.pageYOffset > 0
+                            || (document.documentElement && document.documentElement.scrollTop > 0)
+                            || (document.body && document.body.scrollTop > 0);
+                    } else {
+                        currentCanScrollUp = el.scrollTop > 0;
+                    }
                     if (window.AndroidScroll) {
-                        window.AndroidScroll.onScrollState(canUp);
+                        window.AndroidScroll.onScrollState(currentCanScrollUp);
                     }
                 }
 
-                window.addEventListener('scroll', checkScroll, true);
-                document.addEventListener('scroll', checkScroll, true);
-                window.addEventListener('touchmove', checkScroll, true);
-                setTimeout(checkScroll, 200);
-                setTimeout(checkScroll, 1000);
+                document.addEventListener('touchstart', function(e) {
+                    var target = e.target;
+                    currentScrollable = findScrollableAncestor(target);
+                    checkElement(currentScrollable);
+                }, true);
+
+                document.addEventListener('touchmove', function(e) {
+                    checkElement(currentScrollable);
+                }, true);
+
+                document.addEventListener('scroll', function(e) {
+                    if (e.target === document) {
+                        if (!currentScrollable) checkElement(null);
+                    } else if (e.target === currentScrollable) {
+                        checkElement(currentScrollable);
+                    }
+                }, true);
+
+                setTimeout(function() { checkElement(null); }, 200);
+                setTimeout(function() { checkElement(null); }, 1000);
             })();
         """.trimIndent()
         view?.evaluateJavascript(js, null)
