@@ -31,19 +31,26 @@ jobs:
         with:
           gradle-version: "8.4"
 
-      - name: 构建 Debug APK
-        run: gradle assembleDebug --stacktrace
+      - name: 恢复签名密钥
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > app/release-keystore.jks
+
+      - name: 构建 Release APK
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: gradle assembleRelease --stacktrace
 
       - name: 重命名 APK
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk zouzou-princess-${{ github.run_number }}.apk
-          echo "APK_FILE=zouzou-princess-${{ github.run_number }}.apk" >> $GITHUB_ENV
+          cp app/build/outputs/apk/release/app-release.apk zouzou-princess-${{ github.run_number }}.apk
 
       - name: 上传 Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: app-release
+          path: zouzou-princess-${{ github.run_number }}.apk
           retention-days: 30
 
       - name: 创建 Release
@@ -57,5 +64,5 @@ jobs:
             点击下方 `zouzou-princess-*.apk` 下载安装即可。
 
             **目标网页：** https://zouzou-princess-fan.replit.app/dashboard
-          files: ${{ env.APK_FILE }}
+          files: zouzou-princess-${{ github.run_number }}.apk
           prerelease: false
