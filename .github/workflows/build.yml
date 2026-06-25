@@ -1,4 +1,4 @@
-name: Build APK
+name: Build and Release APK
 
 on:
   push:
@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: 检出代码
@@ -32,9 +34,28 @@ jobs:
       - name: 构建 Debug APK
         run: gradle assembleDebug --stacktrace
 
-      - name: 上传 APK
+      - name: 重命名 APK
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk zouzou-princess-${{ github.run_number }}.apk
+          echo "APK_FILE=zouzou-princess-${{ github.run_number }}.apk" >> $GITHUB_ENV
+
+      - name: 上传 Artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
+
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: 奏奏公主 v1.0.${{ github.run_number }}
+          body: |
+            ## 奏奏公主 APK
+
+            点击下方 `zouzou-princess-*.apk` 下载安装即可。
+
+            **目标网页：** https://zouzou-princess-fan.replit.app/dashboard
+          files: ${{ env.APK_FILE }}
+          prerelease: false
