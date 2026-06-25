@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Zouzou Princess</string>
+    <string name="loading">加载中…</string>
+    <string name="error_loading">页面加载失败</string>
+    <string name="tap_to_retry">点击屏幕重试</string>
+    <string name="no_network">网络不可用，请检查网络连接</string>
+</resources>
