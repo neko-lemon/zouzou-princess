@@ -145,13 +145,14 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * 监听 WebView 滚动位置：
-     * 只有当页面滚动到最顶部 (scrollY == 0) 时才启用下拉刷新，
-     * 页面在中间或底部滚动时不触发刷新，避免误触。
+     * 用 canScrollVertically(-1) 判断页面是否还能往上滚。
+     * 不能往上滚时（即已在最顶部）才启用下拉刷新。
+     * 这比 scrollY == 0 更可靠，不受固定定位横幅影响。
      */
     private fun setupScrollListener() {
         webView.viewTreeObserver.addOnScrollChangedListener(
             ViewTreeObserver.OnScrollChangedListener {
-                swipeRefresh.isEnabled = (webView.scrollY == 0)
+                swipeRefresh.isEnabled = !webView.canScrollVertically(-1)
             }
         )
     }
